@@ -9,24 +9,46 @@ require "date"
 require 'fileutils'
 
 class PowerPointMaker
-  attr_accessor :config, :pixabay_key, :ws, :time_stamp, :lesson
+  attr_accessor :config, :pixabay_key, :ws, :time_stamp, :lesson_number,
+                :deck, :course_name, :lesson_name, :words, :vocabulary_sheet
+
 
   def initialize
     set_config_vars
-    connect_to_workbook
-    @lesson = 100
+    connect_to_vocabulary_workbook
+    @lesson_number = 100
+    @course_name = "Test Course"
+    @lesson_name = "Test Lesson"
     set_output_directory
-    start
+    download
+    create_deck
+    write_deck_title
+    create_slides_for_words
+    save_deck
   end
 
-  def start
-    (4..4).each do |row|
-      if ws[row, 8] == @lesson.to_s
-        word = ws[row, 1]
-        puts "searching " + word
+  def create_slides_for_words
+    @words.each do |word_hash|
+      puts "Creating slides for #{word_hash[:main]}"
+      create_three_slides_for_word(word_hash)
+    end
+  end
+
+  def download
+    (7..8).each do |row|
+      if ws[row, 8] == @lesson_number.to_s
+        word = {
+          main: ws[row,1],
+          part_of_speech: ws[row, 3],
+          ipa: ws[row, 4],
+          sentence: ws[row, 5],
+          definition: ws[row, 6]
+        }
+
+        puts "searching: " +  word[:main]
         download_images_for_word(word)
       else
-        puts "Finished all words for #{@lesson}"
+        puts "Finished all words for #{@lesson_number}"
         break
       end
     end
@@ -34,8 +56,8 @@ class PowerPointMaker
 
   private
 
-  def download_images_for_word(raw_word)
-    search_term = raw_word.gsub(" ", "+")
+  def download_images_for_word(word_hash)
+    search_term = word_hash[:main].gsub(" ", "+")
     url = "https://pixabay.com/api/?key=#{pixabay_key}&q=#{search_term}&image_type=photo"
 
     begin
@@ -46,64 +68,81 @@ class PowerPointMaker
         puts "GETTING: #{image_url}"
         download_image = open(image_url)
         FileUtils.mkdir_p(@directory) unless File.directory?(@directory)
-        IO.copy_stream(download_image, "#{@directory}/#{search_term} - #{index + 1}#{File.extname(image_url)}")
+        created_image_file_path = "#{@directory}/#{search_term} - #{index + 1}#{File.extname(image_url)}"
+        IO.copy_stream(download_image, created_image_file_path)
+        word_hash[:image_path] = created_image_file_path if index == 0
         puts "Successfully added image!"
       end
 
       rescue Exception => error
-        puts "Error with #{raw_word}..."
-        puts e.message
+        puts "Error with #{word_hash[:main]}..."
+        puts error.message
     end
+    @words << word_hash
+
   end
 
   def set_config_vars
     @config = YAML.load_file('config.yaml')
     @pixabay_key = config["PIXABAY_KEY"]
+    @words = []
+    @vocabulary_sheet= @config["GOOGLE_SHEET_VOCABULARY"]
+    @quiz_sheet = @config["GOOGLE_SHEET_QUIZ"]
   end
 
-  def connect_to_workbook
+  def connect_to_vocabulary_workbook
     OpenSSL::SSL.const_set(:VERIFY_PEER, OpenSSL::SSL::VERIFY_NONE)
     session = GoogleDrive::Session.from_config("config.json")
-    @ws = session.spreadsheet_by_key(@config["GOOGLE_SHEET"]).worksheets[0]
+    @ws = session.spreadsheet_by_key(@vocabulary_sheet).worksheets[0]
   end
 
   def set_output_directory
     @time_stamp = DateTime.now.strftime("%s")
-    @directory = "output/#{@lesson} - #{@time_stamp}"
+    @directory = "output/#{@lesson_number} - #{@time_stamp}"
   end
+
+  def create_deck
+    @deck = Powerpoint::Presentation.new
+  end
+
+  def write_deck_title
+    title = @course_name
+    subtitle = @lesson_name
+    @deck.add_intro title, subtitle
+  end
+
+  def create_three_slides_for_word(word_hash)
+    create_word_slide(word_hash)
+    create_detailed_word_slide(word_hash)
+    create_image_slide(word_hash)
+  end
+
+  def create_word_slide(word)
+    title = word[:main]
+    content = [""]
+    @deck.add_textual_slide title
+  end
+
+  def create_detailed_word_slide(word)
+    title = word[:main]
+    content = [word[:part_of_speech], word[:ipa], word[:definition], word[:sentence]]
+    @deck.add_textual_slide title, content
+  end
+
+  def create_image_slide(word)
+    title = word[:main]
+    image_path = word[:image_path]
+    if word[:image_path].length > 5
+      @deck.add_pictorial_slide title, image_path
+    end
+  end
+
+  def save_deck
+    @deck.save("#{@directory}/#{@lesson_name}.pptx")
+    puts "Deck Saved"
+  end
+
 end
 
 PowerPointMaker.new
-puts "End"
 
-# @deck = Powerpoint::Presentation.new
-
-# # Creating an introduction slide:
-# title = 'Bicycle Of the Mind'
-# subtitle = 'created by Steve Jobs'
-# @deck.add_intro title, subtitle
-
-# # Creating a text-only slide:
-# # Title must be a string.
-# # Content must be an array of strings that will be displayed as bullet items.
-# title = 'Why Mac?'
-# content = ['Its cool!', 'Its light.']
-# @deck.add_textual_slide title, content
-
-# # Creating an image Slide:
-# # It will contain a title as string.
-# # and an embeded image
-# # title = 'Everyone loves Macs:'
-# # image_path = 'samples/images/sample_gif.gif'
-# # @deck.add_pictorial_slide title, image_path
-
-# # Specifying coordinates and image size for an embeded image.
-# # x and y values define the position of the image on the slide.
-# # cx and cy define the width and height of the image.
-# # x, y, cx, cy are in points. Each pixel is 12700 points.
-# # coordinates parameter is optional.
-# # coords = {x: 124200, y: 3356451, cx: 2895600, cy: 1013460}
-# # @deck.add_pictorial_slide title, image_path, coords
-
-# # Saving the pptx file to the current directory.
-# @deck.save('test.pptx')
