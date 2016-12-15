@@ -10,21 +10,146 @@ require 'fileutils'
 
 class PowerPointMaker
   attr_accessor :config, :pixabay_key, :ws, :time_stamp, :lesson_number,
-                :deck, :course_name, :lesson_name, :words, :vocabulary_sheet
+                :deck, :course_name, :lesson_name, :words, :vocabulary_sheet,
+                :quiz_questions, :session, :quiz_lesson_number, :lessons
 
 
-  def initialize
+  def self.prompt_user_for_inputs
+    process_type = ""
+
+    until ["s", "m"].include?(process_type)
+      puts "Do you want to process a single presentation or multiple presentations?"
+      puts "[s/m]"
+      process_type = gets.chomp.downcase
+    end
+
+    if process_type == "s"
+      self.create_single_presentation
+    elsif process_type == "m"
+      self.create_multiple_presentations
+    end
+  end
+
+  def initialize(course_name, lesson_name, lesson_number, quiz_lesson_number)
+    @course_name = course_name
+    @lesson_name = lesson_name
+    @lesson_number = lesson_number
+    @quiz_lesson_number = quiz_lesson_number
     set_config_vars
     connect_to_vocabulary_workbook
-    @lesson_number = 100
-    @course_name = "Test Course"
-    @lesson_name = "Test Lesson"
+    connect_to_quiz_workbook
+    create_quiz_questions_hash
     set_output_directory
     download
     create_deck
     write_deck_title
     create_slides_for_words
+    create_slides_for_questions
     save_deck
+  end
+
+  def self.create_single_presentation
+    confirm = ""
+      while confirm != "y"
+
+        puts "Creating single presentation"
+        
+        puts "What's the course name?"
+        course_name = gets.chomp
+        
+        puts "What the lesson name?"
+        lesson_name = gets.chomp
+
+        puts "What's the lesson number on the spreadsheet?"
+        lesson_number = gets.chomp
+        
+        puts "What's the quiz lesson number on the spreadsheet?"
+        quiz_lesson_number = gets.chomp
+
+        puts "Is this correct?"
+        puts "----------------"
+
+        puts <<-CONFIRM_INPUTS
+            Course Name: #{course_name}
+            Lesson Name: #{lesson_name}
+            Lesson Number: #{lesson_number}
+            Quiz Lesson Number: #{quiz_lesson_number}
+        CONFIRM_INPUTS
+
+        puts "[y/n]"
+
+        confirm = gets.chomp.downcase
+      end
+
+      PowerPointMaker.new(course_name, lesson_name, lesson_number, quiz_lesson_number)
+  end
+
+  def self.create_multiple_presentations
+    puts "Creating multiple presentations."
+    puts "Put the course name to be used for all presentations."
+    course_name_for_all_lessons = gets.chomp.strip
+
+    @lessons = []
+    
+    counter = 1
+    
+    auto_generate = ""
+    puts "Auto Generate Lesson info? Only do this if you know what you're doing. [y/n]"
+    auto_generate = gets.chomp.downcase.strip
+
+    if auto_generate == "y"
+      puts "Enter the lesson numbers as integers separated by commas. ex 1,2,5,9"
+      lessons_numbers_to_generate_automatically = gets.chomp.strip.split(",")
+      lessons_numbers_to_generate_automatically.each do |lesson_number|
+        @lessons << [course_name_for_all_lessons, "Lesson #{lesson_number}", (lesson_number.to_i * 100).to_s, lesson_number ]
+      end
+      binding.pry
+    else
+      add_another_lesson = ""
+      until add_another_lesson == "n"
+        add_lesson_to_lessons_array(counter, course_name_for_all_lessons)
+        puts "Add another lesson? [y/n]"
+        add_another_lesson = gets.chomp.downcase
+        counter += 1
+      end
+
+    end
+
+    puts "Start generating presentations."
+    @lessons.each.each_with_index do |l, index|
+      puts "Creating lesson: #{l[1]}"
+      PowerPointMaker.new(l[0], l[1], l[2], l[3])
+      puts "Finished creating presentation for lesson."
+      puts "#{@lessons.count - (index + 1)} lessons left"
+    end
+
+  end
+
+  def self.add_lesson_to_lessons_array(counter, course_name)
+    confirm_inputs = ""
+    until confirm_inputs == "y"
+
+      puts "Presentation Number #{counter}:"
+      puts "Enter the following. Make sure to separate with commas."
+      puts "lesson_name, lesson_number, quiz_lesson_number"
+      presentation_inputs = gets.chomp.split(",")
+      presentation_inputs.map! { |a| a.strip }
+      presentation_inputs.unshift(course_name)
+
+      puts "Is this correct?"
+      puts "----------------"
+
+      puts <<-CONFIRM_INPUTS
+          Course Name: #{presentation_inputs[0]}
+          Lesson Name: #{presentation_inputs[1]}
+          Lesson Number: #{presentation_inputs[2]}
+          Quiz Lesson Number: #{presentation_inputs[3]}
+      CONFIRM_INPUTS
+      puts "[y/n]"
+
+      confirm_inputs = gets.chomp.downcase
+      @lessons << presentation_inputs if confirm_inputs == "y"
+    end
   end
 
   def create_slides_for_words
@@ -35,8 +160,13 @@ class PowerPointMaker
   end
 
   def download
-    (7..8).each do |row|
-      if ws[row, 8] == @lesson_number.to_s
+    started = false
+    (2..@ws.num_rows).each do |row|
+      unless started
+        started = ws[row, 8] == @lesson_number
+        next unless started
+      end
+      if ws[row, 8] == @lesson_number
         word = {
           main: ws[row,1],
           part_of_speech: ws[row, 3],
@@ -53,8 +183,6 @@ class PowerPointMaker
       end
     end
   end
-
-  private
 
   def download_images_for_word(word_hash)
     search_term = word_hash[:main].gsub(" ", "+")
@@ -79,7 +207,6 @@ class PowerPointMaker
         puts error.message
     end
     @words << word_hash
-
   end
 
   def set_config_vars
@@ -88,12 +215,17 @@ class PowerPointMaker
     @words = []
     @vocabulary_sheet= @config["GOOGLE_SHEET_VOCABULARY"]
     @quiz_sheet = @config["GOOGLE_SHEET_QUIZ"]
+    OpenSSL::SSL.const_set(:VERIFY_PEER, OpenSSL::SSL::VERIFY_NONE)
+    @session = GoogleDrive::Session.from_config("config.json")
+
   end
 
   def connect_to_vocabulary_workbook
-    OpenSSL::SSL.const_set(:VERIFY_PEER, OpenSSL::SSL::VERIFY_NONE)
-    session = GoogleDrive::Session.from_config("config.json")
-    @ws = session.spreadsheet_by_key(@vocabulary_sheet).worksheets[0]
+    @ws = @session.spreadsheet_by_key(@vocabulary_sheet).worksheets[0]
+  end
+
+  def connect_to_quiz_workbook
+    @ws_2 = @session.spreadsheet_by_key(@quiz_sheet).worksheets[0]
   end
 
   def set_output_directory
@@ -132,7 +264,7 @@ class PowerPointMaker
   def create_image_slide(word)
     title = word[:main]
     image_path = word[:image_path]
-    if word[:image_path].length > 5
+    if !word[:image_path].nil? && word[:image_path].length > 5
       @deck.add_pictorial_slide title, image_path
     end
   end
@@ -142,7 +274,60 @@ class PowerPointMaker
     puts "Deck Saved"
   end
 
+  def create_quiz_questions_hash
+    @quiz_questions = []
+    question = {}
+    started = false
+
+    (2..@ws_2.num_rows).each_with_index do |row, index|
+       unless started
+            started = @ws_2[row, 5] == @quiz_lesson_number
+          next unless started
+        end
+      
+      if @ws_2[row,1] == "question"
+
+       
+        @quiz_questions << question unless question.empty?
+
+
+        break if @ws_2[row, 5] != @quiz_lesson_number && @ws_2[row, 5] != ""
+
+        question = {
+          body: @ws_2[row, 3],
+          choices: []
+        }
+      else
+        choice = {
+          body: @ws_2[row, 3],
+          correct: (@ws_2[row, 4] == "TRUE" ? true : false)
+        }
+        question[:choices] << choice
+      end
+    end
+  end
+
+  def create_slides_for_questions
+    unless @quiz_questions.empty?
+      @quiz_questions.each do |question|
+        begin
+          title = question[:body]
+          answer_texts = question[:choices].map { |c| c[:body] }
+          correct_answer = question[:choices].select { |c| c[:correct] == true}
+          correct_answer_text = correct_answer[0][:body]
+          content = answer_texts
+          @deck.add_textual_slide title, content
+          @deck.add_textual_slide title, [correct_answer_text]
+
+          rescue Exception => error
+                  puts "Error with #{correct_answer[0]}..."
+                  puts error.message
+
+        end
+      end
+    end
+  end
+
 end
 
-PowerPointMaker.new
-
+PowerPointMaker.prompt_user_for_inputs
