@@ -37,14 +37,14 @@ class PowerPointMaker
     @quiz_lesson_number = quiz_lesson_number
     set_config_vars
     connect_to_vocabulary_workbook
-    connect_to_quiz_workbook
-    create_quiz_questions_hash
+    # connect_to_quiz_workbook
+    # create_quiz_questions_hash
     set_output_directory
     download
     create_deck
     write_deck_title
     create_slides_for_words
-    create_slides_for_questions
+    # create_slides_for_questions
     save_deck
   end
 
@@ -117,7 +117,7 @@ class PowerPointMaker
 
       # Create lesson params and put into @@lessons
       lessons_numbers_to_generate_automatically.each do |lesson_number|
-        @@lessons << [course_name_for_all_lessons, "#{lesson_type} #{lesson_number}", (lesson_number.to_i * 100).to_s, lesson_number.to_s ]
+        @@lessons << [course_name_for_all_lessons, "#{lesson_type} #{lesson_number}", (lesson_number.to_i * 1).to_s, lesson_number.to_s ]
       end
     else
       # Continue to prompt use for Lesson info
@@ -191,7 +191,6 @@ class PowerPointMaker
           sentence: ws[row, 5],
           definition: ws[row, 6]
         }
-
         puts "searching: " +  word[:main]
         download_images_for_word(word)
       else
