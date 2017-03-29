@@ -1,4 +1,4 @@
-require "HTTParty"
+require "httparty"
 require "pry"
 require "google_drive"
 require "yaml"
@@ -9,6 +9,10 @@ require 'fileutils'
 
 class PowerPointMaker
   @@lessons = []
+
+  @@make_vocab = true
+  @@make_quiz = true
+
   attr_accessor :config, :pixabay_key, :ws, :time_stamp, :lesson_number,
                 :deck, :course_name, :lesson_name, :words, :vocabulary_sheet,
                 :quiz_questions, :session, :quiz_lesson_number
@@ -23,6 +27,27 @@ class PowerPointMaker
       process_type = gets.chomp.downcase
     end
 
+    want_to_make_vocabulary = ""
+
+    until ["y", "n"].include?(want_to_make_vocabulary)
+      puts "Want to create slides for vocabulary?"
+      puts "[y/n]"
+      want_to_make_vocabulary = gets.chomp.downcase
+    end
+
+    @@make_vocab = want_to_make_vocabulary == "y" ? true : false
+
+
+    want_to_make_quiz = ""
+
+    until ["y", "n"].include?(want_to_make_quiz)
+      puts "Want to create slides for quiz?"
+      puts "[y/n]"
+      want_to_make_quiz = gets.chomp.downcase
+    end
+
+    @@make_quiz = want_to_make_quiz == "y" ? true : false
+
     if process_type == "s"
       self.create_single_presentation
     elsif process_type == "m"
@@ -36,15 +61,15 @@ class PowerPointMaker
     @lesson_number = lesson_number
     @quiz_lesson_number = quiz_lesson_number
     set_config_vars
-    connect_to_vocabulary_workbook
-    # connect_to_quiz_workbook
-    # create_quiz_questions_hash
+    connect_to_vocabulary_workbook if @@make_vocab
+    connect_to_quiz_workbook if @@make_quiz
+    create_quiz_questions_hash if @@make_quiz
     set_output_directory
-    download
+    download if @@make_vocab
     create_deck
     write_deck_title
-    create_slides_for_words
-    # create_slides_for_questions
+    create_slides_for_words if @@make_vocab
+    create_slides_for_questions if @@make_quiz
     save_deck
   end
 
@@ -207,7 +232,7 @@ class PowerPointMaker
     begin
       response = HTTParty.get(url)
       # Download the images for the entry
-      response["hits"][0, 10].each_with_index do |hit, index|
+      response["hits"][0].each_with_index do |hit, index|
         image_url = hit["webformatURL"]
         puts "GETTING: #{image_url}"
         download_image = open(image_url)
@@ -289,6 +314,7 @@ class PowerPointMaker
   end
 
   def save_deck
+    FileUtils.mkdir_p(@directory) unless File.directory?(@directory)
     @deck.save("#{@directory}/#{@lesson_name}.pptx")
     puts "Deck Saved"
   end
